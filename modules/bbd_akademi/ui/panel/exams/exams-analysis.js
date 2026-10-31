@@ -23,6 +23,7 @@ import {
 
 const OP_ANALYSIS = 'students_getExamResultAnalysis';
 const OP_REPORT_CARD = 'students_getExamReportCard';
+const OP_ANALYSIS_PDF = 'admin_getStudentExamAnalysisPdf';
 
 /**
  * "Karne (PDF)" düğmesi: Akademi PDF'i hazırlar, imzalı bağlantıdan indirilir ve açılır.
@@ -53,6 +54,36 @@ export function reportCardButton(app, { studentId, examId, label = TEXT.reportCa
 }
 
 /**
+ * "Soru soru analizi (PDF)" (iş 83): A4, en çok 2 sayfa — BÜTÜN sorular derse göre, cevap · doğru · sonuç · kazanım.
+ * Yönetici ucu (`admin_getStudentExamAnalysisPdf`: kurum kapsamı yayından önce de alır); dosya imzalı bağlantıdan iner.
+ */
+export function analysisPdfButton(app, { studentId, examId, label = TEXT.analysisPdf, variant = '' }) {
+  if (!app.api.can(OP_ANALYSIS_PDF)) {
+    const blocked = button(label, { variant, disabled: true });
+    blocked.title = app.api.operation?.(OP_ANALYSIS_PDF)
+      ? 'Bu işlem için yetkiniz yok (yöneticinizden izin isteyin).'
+      : 'Akademi sunucusu bu belgeyi henüz desteklemiyor.';
+    return blocked;
+  }
+  const node = button(label, { variant, onClick: async () => {
+    node.disabled = true;
+    const before = node.textContent;
+    node.textContent = TEXT.analysisPdfBusy;
+    try {
+      const out = await app.api.get(`/v1/admin/students/${studentId}/exams/${examId}/analysis-pdf`);
+      const file = await app.api.fetchFile(out.url, out.fileName || 'soru-soru-analiz.pdf');
+      openBlob(file);
+    } catch (failure) {
+      app.toast(problem(failure, TEXT.analysisPdfFailed), 'bad');
+    } finally {
+      node.textContent = before;
+      node.disabled = false;
+    }
+  } });
+  return node;
+}
+
+/**
  * Ayrıntılı analiz bölümü: ders seçimi + "Soru soru analiz" + "Konu analizi".
  * @returns {{node: HTMLElement, reload: () => Promise<void>}}
  */
@@ -69,7 +100,8 @@ export function examAnalysisSection(app, { studentId, examId }) {
 
   function render(analysis) {
     if (analysis.absent) return [];
-    const state = { filter: 'wrong_blank', group: '' };
+    // Soru soru (iş 83): varsayılan BÜTÜN sorular (doğrular dahil); süzgeç yanlış / boş'a daraltır.
+    const state = { filter: 'all', group: '' };
     const sections = new Map((analysis.sections || []).map((section) => [section.id, section]));
     const questionsBody = h('div', 'ak-stack');
     const topicsBody = h('div', 'ak-stack');

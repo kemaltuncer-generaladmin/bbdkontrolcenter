@@ -45,6 +45,24 @@ from modules.bbd_akademi.backend.core.operations import Operation
 
 #: Ekranda bilerek yer almayan işlemler → gerekçe.
 NOT_SURFACED: dict[str, str] = {
+    # --- kurum finansı kilidi (Akademi §14 143, iş 83): KM izni KM sunucusunda KM oturumu başına tutulur
+    # (`backend/finance/access.py`, `/api/bbd_akademi/km/finance-access/*`); bu uçlar vekilde KAPALI (PROXY_DENIED_OPERATIONS).
+    "admin_getFinanceAccess":
+        "Kişi oturumunun finans izni (web/mobil); KM izni kendi sunucusunda tutar ve /km/finance-access ile okur (Akademi §14 143).",
+    "admin_requestFinanceAccess":
+        "Kişi oturumu için onay kodu (web/mobil); KM kodu kendi ucundan admin_requestKmFinanceAccess ile ister (Akademi §14 143).",
+    "admin_verifyFinanceAccess":
+        "Kişi oturumu için kod doğrulama (web/mobil); KM kendi ucundan admin_verifyKmFinanceAccess ile doğrular (Akademi §14 143).",
+    "admin_endFinanceAccess":
+        "Kişi oturumunda 'Finansı kilitle' (web/mobil); KM izni kendi sunucusunda kapatır (/km/finance-access/end) (Akademi §14 143).",
+    "admin_requestKmFinanceAccess":
+        "KM sunucusu çağırır (backend/finance/access.py), panel değil: kod KM oturumuna bağlanır; vekilde kapalı (Akademi §14 143).",
+    "admin_verifyKmFinanceAccess":
+        "KM sunucusu çağırır (backend/finance/access.py), panel değil: doğrulanınca izni KM oturumuna yazar; vekilde kapalı (Akademi §14 143).",
+    "admin_setStaffFinanceManager":
+        "KM personeli Akademi'ye admin_syncStaff ile itilir (items[].financeManager); KM'de 'Finans yöneticisi' Personel → Mobil yönetici erişimi formundadır (Akademi §14 143).",
+    "students_getExamAnalysisPdf":
+        "Öğrenci / veli uygulamasının soru soru analizi; KM aynı belgeyi yönetici ucundan (admin_getStudentExamAnalysisPdf, yayından önce de) alır (Akademi §14 144).",
     # --- BBD Optik (Akademi §14 141, iş 82): okuma telefondaki ayrı uygulamadadır (yalnız yönetici).
     # KM "Optik formlar" sekmesi okunmuş formları gösterir ve bekleyenleri tamamlar (sheets / layout / students / PATCH).
     "admin_listOmrExams":

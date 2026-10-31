@@ -76,6 +76,10 @@ def ascii_sms(text: str) -> str:
 
 #: Duyuru SMS'i (POST /sms/send): en çok 3 SMS (GSM-7 çok parçalı 3 × 153 birim).
 TEXT_SMS_MAX_UNITS = 459
+#: Kurum finansı onay kodu (bbd-akademi README §14 madde 143): OTP gibi, kurum SMS bütçesi dışı.
+FINANCE_ACCESS_PURPOSE = "finance_access"
+#: Finans yöneticisinin telefonuna saatte en çok bu kadar onay kodu (Akademi'nin sınırıyla aynı: 30/saat).
+FINANCE_ACCESS_PER_PHONE_PER_HOUR = 30
 _GSM7_EXTENDED = frozenset("^{}\\[~]|")
 
 
@@ -2479,6 +2483,8 @@ class GatewayService:
         `403 sms_disabled`. Her gönderim `sms_log`a `purpose` ile yazılır (telefon maskeli,
         metin yazılmaz); OTP sağlık özeti bunları saymaz.
         """
+        if purpose == FINANCE_ACCESS_PURPOSE:
+            return await self._send_finance_code(phone, text, caller)
         if not self.text_sms_enabled:
             raise GatewayError(403, "sms_disabled", "Kurum SMS'i Kontrol Merkezi'nde kapalı.",
                                retryAfterSeconds=3600)
@@ -2527,6 +2533,67 @@ class GatewayService:
 
         try:
             result = await self.caps.send_sms(normalized, message)
+        except CapabilityMissing as missing:
+            await log("failed", "capability_missing")
+            raise capability_missing(missing.capability) from None
+        except UpstreamFailure as failure:
+            await log("failed", failure.reason or failure.kind)
+            if failure.kind == "unavailable":
+                raise canteen_unavailable() from None
+            raise GatewayError(502, "sms_failed", "SMS gönderilemedi.") from None
+        if not result.get("sent"):
+            await log("failed", str(result.get("reason") or "unknown")[:60],
+                      channel=str(result.get("channel") or ""))
+            raise GatewayError(502, "sms_failed", "SMS gönderilemedi.")
+        job_id = str(result.get("jobId") or "")
+        channel = str(result.get("channel") or "")
+        await log("sent", job_id=job_id, channel=channel)
+        reply: dict[str, Any] = {"sent": True, "segments": parts}
+        if job_id:
+            reply["jobId"] = job_id
+        if channel:
+            reply["channel"] = channel
+        return reply
+
+    async def _send_finance_code(self, phone: str, text: str, caller: Caller) -> dict[str, Any]:
+        """Kurum finansı onay kodu (bbd-akademi README §14 madde 143): Akademi metni hazırlar (ASCII, tek SMS), kod
+        finans yöneticisinin telefonuna gider. OTP GİBİ: kurum SMS bütçesine ve "kurum SMS'i kapalı" şalterine
+        bağlı DEĞİL (bütçe dolduğunda finans kilitli kalmasın); Netgsm OTP hattı (`purpose="otp"`, eski kantinde
+        olağan hat). Sınır: toplam dakikada `sms_global_per_minute` (OTP ile ortak) + telefon başına saatte
+        `FINANCE_ACCESS_PER_PHONE_PER_HOUR` (Akademi de ayrıca sınırlar)."""
+        normalized = normalize_phone(phone)
+        if normalized is None:
+            raise validation("Telefon 5XXXXXXXXX biçiminde olmalı.", "phone")
+        message = ascii_sms(text)
+        if not message:
+            raise validation("SMS metni boş olamaz.", "text")
+        if sms_units(message) > TEXT_SMS_MAX_UNITS:
+            raise validation(f"SMS metni en çok {TEXT_SMS_MAX_UNITS} karakter olabilir.", "text")
+        parts = sms_segments(message)
+        await self.tick()
+        now = self.now_ms()
+        masked = mask_phone(normalized)
+        subject = phone_subject(normalized)
+
+        async def log(status: str, reason: str = "", job_id: str = "", channel: str = "") -> None:
+            await self.repo.log_sms(at=self.now_ms(), phone_masked=masked, purpose=FINANCE_ACCESS_PURPOSE,
+                                    status=status, reason=reason, user_id=caller.user_id,
+                                    on_behalf_of=caller.on_behalf_of,
+                                    request_id=caller.request_id, job_id=job_id, channel=channel)
+
+        overall = await self.repo.window("sms_global", "*", now - MINUTE_MS)
+        if overall.count >= self.sms_global_per_minute and overall.oldest is not None:
+            await log("rate_limited", "global")
+            raise rate_limited(math.ceil((overall.oldest + MINUTE_MS - now) / 1000))
+        hourly = await self.repo.window("finance_access_phone", subject, now - HOUR_MS)
+        if hourly.count >= FINANCE_ACCESS_PER_PHONE_PER_HOUR and hourly.oldest is not None:
+            await log("rate_limited", "phone")
+            raise rate_limited(math.ceil((hourly.oldest + HOUR_MS - now) / 1000),
+                               "Bu numaraya çok fazla onay kodu gönderildi. Daha sonra deneyin.")
+        await self.repo.hit("sms_global", "*", now)
+        await self.repo.hit("finance_access_phone", subject, now)
+        try:
+            result = await self.caps.send_sms(normalized, message, purpose="otp")
         except CapabilityMissing as missing:
             await log("failed", "capability_missing")
             raise capability_missing(missing.capability) from None

@@ -249,7 +249,9 @@ class TextSmsBody(BaseModel):
 
     phone: str = Field(pattern=PHONE)
     text: str = Field(min_length=1, max_length=1000)
-    purpose: Literal["announcement", "payment_reminder", "exam_result"]
+    # `finance_access` (bbd-akademi README §14 madde 143): kurum finansı onay kodu finans yöneticisinin telefonuna —
+    # OTP gibi, kurum SMS bütçesine SAYILMAZ (service.send_text).
+    purpose: Literal["announcement", "payment_reminder", "exam_result", "finance_access"]
 
 
 class SmsLimitResetBody(ReasonBody):

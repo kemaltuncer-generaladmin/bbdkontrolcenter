@@ -100,3 +100,20 @@ async def test_payment_and_exam_purposes_share_budget(client: httpx.AsyncClient,
     disabled = expect_error(await send(client), 403, "sms_disabled")
     assert disabled["retryAfterSeconds"] == 3600
     assert (await client.get("/sms/health")).json()["textSms"]["enabled"] is False
+
+
+async def test_finans_onay_kodu_butce_disi_otp_hatti(client: httpx.AsyncClient, service: GatewayService,
+                                                    world: World, store: Any) -> None:
+    """bbd-akademi madde 143: kurum finansı onay kodu `finance_access` — OTP hattı, kurum SMS bütçesine ve
+    "kurum SMS'i kapalı" şalterine bağlı değil; telefon başına saatte 30."""
+    service.text_sms_daily_budget = 0
+    service.text_sms_enabled = False
+    text = "BBD Akademi: Ayse Yilmaz kurum finansina giris istiyor. Onay kodu: 123456. Kodu yalniz bu kisiye siz verin."
+    sent = await client.post("/sms/send", json={"phone": MOTHER, "text": text, "purpose": "finance_access"})
+    assert sent.status_code == 200, sent.text
+    assert world.canteen.sms_purposes[-1] == "otp"
+    row = (await table(store, "sms_log"))[-1]
+    assert row["purpose"] == "finance_access" and row["status"] == "sent"
+    assert "123456" not in repr(row)
+    health = (await client.get("/sms/health")).json()
+    assert health["textSms"]["used"] == 0

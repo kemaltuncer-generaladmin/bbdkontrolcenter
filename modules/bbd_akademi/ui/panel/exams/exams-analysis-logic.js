@@ -35,6 +35,11 @@ export const TEXT = {
   weak: 'Zayıf',
   cancelled: 'İptal (doğru sayıldı)',
   reportCard: 'Karne (PDF)',
+  // Soru soru deneme analizi (iş 83, Akademi README §14 madde 144): A4, en çok 2 sayfa, BÜTÜN sorular + kazanım.
+  analysisPdf: 'Soru soru analizi (PDF)',
+  analysisPdfBusy: 'Analiz hazırlanıyor…',
+  analysisPdfFailed: 'Soru soru analizi hazırlanamadı. Lütfen tekrar deneyin.',
+  noOutcome: 'Kazanım eşlenmemiş',
   reportCardBusy: 'Karne hazırlanıyor…',
   reportCardFailed: 'Karne hazırlanamadı. Lütfen tekrar deneyin.',
 };
@@ -82,7 +87,17 @@ export function topicText(question) {
   return names.length ? names.join(' · ') : TEXT.unmapped;
 }
 
+/**
+ * Kazanım satırı. Sunucu `outcomeTexts` veriyorsa (iş 83: yayınevi kazanımı → yoksa konu/ünite adı) "kod · metin";
+ * boş dizi → "Kazanım eşlenmemiş". Eski sunucu (alan yok) → `outcomes`.
+ */
 export function outcomeText(question) {
+  if (Array.isArray(question.outcomeTexts)) {
+    const texts = question.outcomeTexts.filter(Boolean);
+    if (!texts.length) return TEXT.noOutcome;
+    const code = question.outcomeCode ? `${question.outcomeCode} · ` : '';
+    return `Kazanım: ${code}${texts.join(' · ')}`;
+  }
   const list = (question.outcomes || []).filter(Boolean);
   return list.length ? `Kazanım: ${list.join(' · ')}` : '';
 }

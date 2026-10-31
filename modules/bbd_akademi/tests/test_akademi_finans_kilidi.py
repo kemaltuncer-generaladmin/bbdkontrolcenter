@@ -160,7 +160,7 @@ async def test_yanlis_kod_ve_baska_oturum(locked_client: httpx.AsyncClient, akad
     asked = await locked_client.post("/api/bbd_akademi/km/finance-access/request", headers=auth())
     stolen = await locked_client.post("/api/bbd_akademi/km/finance-access/verify", headers=auth("admin-2"),
                                       json={"challengeId": asked.json()["challengeId"], "code": "123456"})
-    assert stolen.status_code == 400
+    assert stolen.status_code == 410
     assert stolen.json()["error"]["code"] == "otp_expired"
 
     # Doğru oturumda açılır; öteki oturum hâlâ kilitli.

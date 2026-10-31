@@ -115,9 +115,12 @@ export default async function ({ document, audit, sleep, load }) {
     .map((row) => row.textContent);
   out.chips = chips();
   out.cards = root.querySelectorAll('.kit-card-title').map((node) => node.textContent);
-  out.defaultRows = rows();
+  out.initialRows = rows().length;
   out.violations = audit(root);
   const click = (label) => root.querySelectorAll('.kit-chips .kit-chip').find((chip) => chip.textContent.startsWith(label)).click();
+  click('Yanlış ve boş');
+  await sleep(5);
+  out.defaultRows = rows();
   click('Hepsi');
   await sleep(5);
   out.allRows = rows().length;
@@ -208,7 +211,9 @@ def test_analysis_section_behaviour() -> None:
     out = _run(SCENARIO)
     assert out["chips"] == ["Tüm dersler", "Matematik", "Fizik", "Yanlış ve boş4", "Yanlış2", "Boş2", "Hepsi6"]
     assert out["cards"] == ["Soru soru analiz", "Konu analizi"]
-    # varsayılan: önce yanlışlar (Matematik 3, Fen 2), sonra boşlar (Matematik 2, Fen 1)
+    # iş 83: varsayılan BÜTÜN sorular (doğrular dahil)
+    assert out["initialRows"] == 6
+    # "Yanlış ve boş": önce yanlışlar (Matematik 3, Fen 2), sonra boşlar (Matematik 2, Fen 1)
     rows = out["defaultRows"]
     assert len(rows) == 4
     assert rows[0].startswith("Matematik · 3. soru · A kitapçığında 7") and "Cevap: C · Doğru: A" in rows[0]

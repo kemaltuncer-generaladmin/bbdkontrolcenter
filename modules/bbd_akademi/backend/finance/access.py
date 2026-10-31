@@ -172,7 +172,7 @@ class FinanceAccess:
                 or challenge.expires <= self._clock()):
             # Başka oturumun / kişinin kodu ya da süresi dolmuş istek: Akademi'ye hiç gitmez.
             self._log.info("finance_access.failed", user=user.id, reason="challenge_unknown")
-            raise FinanceAccessError(400, "otp_expired",
+            raise FinanceAccessError(410, "otp_expired",
                                      "Onay kodunun süresi doldu ya da bu oturuma ait değil. Yeni kod isteyin.")
         clean = "".join(ch for ch in str(code or "") if ch.isdigit())
         if len(clean) != 6:

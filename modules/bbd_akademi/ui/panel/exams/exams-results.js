@@ -13,7 +13,7 @@ import {
   actionButton, confirmAction, exportJob, formDialog, num, openDrawer, pagedList, runAction, selectBox,
   studentPicker, toolbar,
 } from '../common.js';
-import { examAnalysisSection, reportCardButton } from './exams-analysis.js';
+import { analysisPdfButton, examAnalysisSection, reportCardButton } from './exams-analysis.js';
 import {
   RESULT_SOURCE, estimateNet, netText, sectionLabel, sortedSections, studentCell,
 } from './exams-shared.js';
@@ -101,13 +101,16 @@ export function resultsTab(app, exam, { onChanged } = {}) {
       return h('small', 'ak-muted', exam.deliveryMode === 'app' && row.source === 'answers' ? 'Uygulamada'
         : RESULT_SOURCE[row.source] || row.source || '—');
     } },
-    { key: 'actions', label: '', width: '200px', cell: (row) => {
+    { key: 'actions', label: '', width: '300px', cell: (row) => {
       const actions = h('div', 'ak-row-actions');
       const hasResult = Boolean(row.updatedAt);
       // Tam ayrıntılı analiz (soru soru + bütün konular) ve karne PDF'i (Akademi README §14 madde 138)
       if (hasResult && !row.absent) {
         actions.append(actionButton(app, 'students_getExamResultAnalysis', 'Analiz', { variant: 'ghost',
           onClick: () => openAnalysis(app, exam, row) }));
+        // Satırdan tek tıkla soru soru analiz PDF'i (iş 83).
+        actions.append(analysisPdfButton(app, { studentId: row.student?.id, examId: exam.id,
+          label: 'Soru soru PDF', variant: 'ghost' }));
       }
       actions.append(actionButton(app, 'admin_putExamResult', hasResult ? 'Düzenle' : 'Sonuç gir', {
         variant: 'ghost', onClick: () => edit(row.student, hasResult ? row : null) }));
@@ -186,7 +189,8 @@ function openAnalysis(app, exam, row) {
   panel.node.classList.add('ak-ex-analysis-drawer');
   const analysis = examAnalysisSection(app, { studentId: student.id, examId: exam.id });
   panel.body.append(toolbar(rankCell(row.ranks), h('span', 'kit-spacer'),
-    reportCardButton(app, { studentId: student.id, examId: exam.id })), analysis.node);
+    reportCardButton(app, { studentId: student.id, examId: exam.id }),
+    analysisPdfButton(app, { studentId: student.id, examId: exam.id })), analysis.node);
   analysis.reload();
   return panel;
 }
@@ -421,9 +425,11 @@ export function exportTab(app, exam) {
   const kindSelect = selectBox([
     { value: 'results_table', label: 'Sonuç tablosu' },
     { value: 'report_cards', label: 'Öğrenci karneleri' },
+    // Tüm öğrencilerin soru soru analizi (iş 83): öğrenci başına ≤ 2 sayfa, birleşik tek PDF.
+    { value: 'analysis', label: 'Tüm öğrencilerin soru soru analizi (PDF)' },
   ], state.kind, (value) => {
     state.kind = value;
-    if (value === 'report_cards' && state.format === 'xlsx') { state.format = 'pdf'; formatSelect.set('pdf'); }
+    if (value !== 'results_table' && state.format === 'xlsx') { state.format = 'pdf'; formatSelect.set('pdf'); }
   }, { label: 'İçerik' });
   const formatSelect = selectBox([{ value: 'xlsx', label: 'Excel (XLSX)' }, { value: 'pdf', label: 'PDF' }],
     state.format, (value) => { state.format = value; }, { label: 'Biçim' });
@@ -453,15 +459,23 @@ export function exportTab(app, exam) {
   paintChosen();
 
   const go = actionButton(app, 'admin_exportExam', 'Dosyayı hazırla', { variant: 'primary', onClick: async () => {
+    if (state.kind === 'analysis' && state.format !== 'pdf') {
+      app.toast('Soru soru analizi yalnız PDF olarak hazırlanır.', 'warn');
+      state.format = 'pdf';
+      formatSelect.set('pdf');
+    }
     go.disabled = true;
+    const names = { report_cards: ['karneler', 'Karneler hazırlanıyor…'],
+      analysis: ['soru-soru-analiz', 'Soru soru analizleri hazırlanıyor…'],
+      results_table: ['sonuclar', 'Sonuç tablosu hazırlanıyor…'] };
+    const [suffix, busyLabel] = names[state.kind] || names.results_table;
     try {
       await exportJob(app, () => app.api.post(`/v1/admin/exams/${exam.id}/exports`, {
         kind: state.kind,
         format: state.format,
         classGroupId: state.classGroupId || null,
         studentIds: state.students.length ? state.students.map((item) => item.id) : undefined,
-      }, { key: newKey('exam-export') }), { name: `${slug(exam.name)}-${state.kind === 'report_cards' ? 'karneler' : 'sonuclar'}`,
-        label: state.kind === 'report_cards' ? 'Karneler hazırlanıyor…' : 'Sonuç tablosu hazırlanıyor…' });
+      }, { key: newKey('exam-export') }), { name: `${slug(exam.name)}-${suffix}`, label: busyLabel });
     } finally {
       go.disabled = false;
     }
@@ -473,6 +487,8 @@ export function exportTab(app, exam) {
       + 'Yayımlanmamış sonuçlar da dosyaya girer.'),
     h('div', 'ak-muted', 'Öğrenci karnesinde ders netleri, sıralar, bütün yanlış ve boş sorular (konu / kazanım) ve '
       + 'bütün konular yer alır; öğrenci ve veli aynı karneyi uygulamadan "Karnemi indir" ile alır.'),
+    h('div', 'ak-muted', 'Soru soru analizinde her öğrencinin BÜTÜN soruları derse göre (cevap, doğru, sonuç, kazanım) '
+      + 'en çok 2 sayfada yer alır; girmeyen öğrenci atlanır.'),
     toolbar(go));
   node.append(card('Dışa aktar', form));
   return { node, reload: () => {}, destroy() { picker.destroy(); } };
