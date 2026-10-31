@@ -153,8 +153,31 @@ export function kv(rows) {
   return node;
 }
 
+// ------------------------------------------------- kurum finansı kilidi (iş 83)
+
+let financeUnlock = null;
+
+/** Kilit penceresini açan işlev (`index.js` → `app.financeLock.ensure`); açılırsa true döner. */
+export function setFinanceUnlock(fn) {
+  financeUnlock = typeof fn === 'function' ? fn : null;
+}
+
+/** Kurum finansı kilitli (vekil `finance_access_required`)? Pencere açılır; kod girilirse true. */
+export async function unlockFinance(error) {
+  if (error?.code !== 'finance_access_required' || !financeUnlock) return false;
+  return Boolean(await financeUnlock());
+}
+
 /** Hata kutusu + "Tekrar dene". */
 export function errorBox(error, retry) {
+  if (error?.code === 'finance_access_required') {
+    // Kilit bir HATA değildir: sakin bir not + kilidi açan düğme; açılınca içerik kendiliğinden yüklenir.
+    const lockedNode = h('div', 'ak-off');
+    lockedNode.append(alertBox('Kurum finansı kilitli. Görmek için onay kodu gerekir.', 'info'));
+    lockedNode.append(button('Finansın kilidini aç', { variant: 'ghost',
+      onClick: async () => { if (await unlockFinance(error)) retry?.(); } }));
+    return lockedNode;
+  }
   if (error?.code === 'feature_disabled') {
     // Kapalı özellik bir HATA değildir: sakin bir not, "tekrar dene" yok.
     const off = h('div', 'ak-off');
@@ -658,6 +681,19 @@ export async function runAction(app, fn, { success = '', button: control = null 
     if (success) app.toast(success, 'good');
     return result;
   } catch (failure) {
+    // Kurum finansı kilitli: kod penceresi açılır; açılırsa işlem bir kez daha (aynı anahtarla) denenir.
+    if (await unlockFinance(failure)) {
+      try {
+        const result = await fn();
+        if (success) app.toast(success, 'good');
+        return result;
+      } catch (again) {
+        app.toast(problem(again), 'bad');
+        return undefined;
+      } finally {
+        if (control) control.disabled = false;
+      }
+    }
     app.toast(problem(failure), 'bad');
     return undefined;
   } finally {

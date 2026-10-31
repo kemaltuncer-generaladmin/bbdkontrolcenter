@@ -14,3 +14,38 @@
 .ak-fin-amount { width: 120px; text-align: right; }
 .ak-fin-pick-total { font-weight: 600; text-align: right; padding-top: 4px; }
 .ak-fin-preview { border: 1px dashed var(--line); border-radius: 9px; padding: 8px; }
+
+/* Kurum finansı kilidi (iş 83): kilit kartı / penceresi ve "Finans açık · 28 dk" rozeti. */
+.ak-fin-lock { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px;
+  max-width: 460px; margin: 0 auto; padding: 8px 4px; }
+.ak-fin-lock-card { margin: 32px auto; padding: 28px 24px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--surface); }
+.ak-fin-lock-dialog { width: min(480px, calc(100% - 32px)); }
+.ak-fin-lock-icon { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-tint); color: var(--accent); }
+.ak-fin-lock-icon .ak-ico { width: 26px; height: 26px; }
+.ak-fin-lock-title { margin: 0; font-size: 18px; }
+.ak-fin-lock-text { margin: 0; color: var(--soft); font-size: 13.5px; line-height: 1.45; }
+.ak-fin-lock-who { margin: 0; font-size: 13px; }
+.ak-fin-lock-who:empty { display: none; }
+.ak-fin-lock-code { display: flex; gap: 8px; align-items: center; }
+.ak-fin-lock-input { width: 150px; font-size: 22px; letter-spacing: 6px; text-align: center;
+  font-variant-numeric: tabular-nums; }
+.ak-fin-lock-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.ak-fin-lock-note { width: 100%; }
+.ak-fin-lock-note:empty { display: none; }
+.ak-fin-open { display: inline-flex; align-items: center; gap: 6px; }
+.ak-fin-open[hidden] { display: none; }
+.ak-fin-open-badge { font-size: 12.5px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+  background: var(--good-tint); color: var(--good); white-space: nowrap; }
+
+/* Finans genel bakış (iş 83): üç büyük kart — sözleşme bedeli · cari (alacak) · tahsilatlar. */
+.ak-fin-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 900px) { .ak-fin-overview { grid-template-columns: minmax(0, 1fr); } }
+.ak-fin-ov-card { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px;
+  padding: 14px 16px; background: var(--surface); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ak-fin-ov-label { font-size: 12.5px; color: var(--soft); font-weight: 600; text-transform: none; }
+.ak-fin-ov-value { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.ak-fin-ov-sub { font-size: 12.5px; color: var(--soft); }
+.ak-fin-ov-sub.bad { color: var(--bad); }
+.ak-fin-ov-methods { font-size: 12px; color: var(--soft); }

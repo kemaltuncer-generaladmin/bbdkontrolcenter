@@ -26,6 +26,17 @@ import { button, h } from '../../ui-kit/kit.js';
 import { canPrintLocally, printDocument, printerReady } from '../../ui-kit/printing.js';
 import { closePdfViewer, pdfViewer, reportToolbar } from '../../ui-kit/report.js';
 import { problem } from './api.js';
+import { unlockFinance } from './common.js';
+
+/** Veriyi okur; kurum finansı kilitliyse (iş 83) kod penceresi açılır ve açılırsa bir kez daha okunur. */
+async function buildUnlocked(build, ...args) {
+  try {
+    return await build(...args);
+  } catch (error) {
+    if (await unlockFinance(error)) return build(...args);
+    throw error;
+  }
+}
 
 const TIMEOUT = 300;
 
@@ -143,7 +154,7 @@ export async function runDocument(app, build, { print = false, title = 'Belge', 
   const busy = progressDialog(app, title, opener);
   let model;
   try {
-    model = await build((done, total, label) => busy.step(done, total, label), busy.state);
+    model = await buildUnlocked(build, (done, total, label) => busy.step(done, total, label), busy.state);
   } catch (error) {
     busy.close();
     app.toast?.(problem(error, `${title} için veri okunamadı.`), 'bad');
@@ -235,7 +246,7 @@ export function documentButtons(app, { build, title = 'Belge', label = '', disab
 export function financeToolbar(app, { build, title = 'Rapor', label = '', orientation = 'portrait',
   blocked = null } = {}) {
   const produce = async ({ preview, orientation: chosen }) => {
-    const model = await build(() => {}, { cancelled: false });
+    const model = await buildUnlocked(build, () => {}, { cancelled: false });
     if (!model?.document) return { ok: false, error: `${title} için yazdırılacak kayıt yok.` };
     const document = { ...model.document, orientation: chosen || model.document.orientation || orientation };
     try {

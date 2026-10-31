@@ -46,6 +46,8 @@ const CODE_TEXT = {
   forbidden: 'Bu işlem için yetkiniz yok.',
   feature_disabled: 'Bu özellik kurum için kapalı (Ayarlar → Özellikler).',
   step_up_required: 'Bu işlem için PIN teyidi gerekiyor.',
+  // Kurum finansı kilidi (iş 83): vekil bu oturumda onay kodu görmedi ya da 30 dk hareketsiz kaldı.
+  finance_access_required: 'Kurum finansı için onay kodu gerekli.',
   rate_limited: 'Çok sık istek gönderildi; birkaç saniye bekleyip tekrar deneyin.',
   idempotency_conflict: 'Aynı işlem farklı bilgilerle tekrar gönderildi. Formu kapatıp yeniden açın.',
   version_conflict: 'Kayıt siz düzenlerken değişti. Ekranı yenileyip tekrar deneyin.',
@@ -103,6 +105,8 @@ function queryKey(path, query) {
  * @param {object} ctx — panelin `mount(root, ctx)` bağlamı
  * @param {object} hooks — `onUnavailable(error)`: bir OKUMA "güncelleniyor" hatasıyla
  *   bitti; `onAvailable()`: Akademi'den başarılı yanıt geldi (bant kalkar).
+ *   `onFinanceUntil(iso)`: kurum finansı isteği başarılı, izin şu ana dek açık (iş 83);
+ *   `onFinanceLocked(error)`: vekil `finance_access_required` döndü (kilit kapalı).
  */
 export function createClient(ctx, hooks = {}) {
   const etags = new Map();      // anahtar → {etag, data, at}
@@ -125,8 +129,10 @@ export function createClient(ctx, hooks = {}) {
       }
       if (lastFailedRead && payload.method === 'GET') lastFailedRead = null;
       hooks.onAvailable?.();
+      if (envelope.headers?.financeAccessUntil) hooks.onFinanceUntil?.(envelope.headers.financeAccessUntil);
       return envelope;
     } catch (failure) {
+      if (failure?.code === 'finance_access_required') hooks.onFinanceLocked?.(failure);
       if (payload.method === 'GET' && isUpdating(failure)) {
         lastFailedRead = { method: 'GET', path: payload.path, query: payload.query };
         hooks.onUnavailable?.(failure);

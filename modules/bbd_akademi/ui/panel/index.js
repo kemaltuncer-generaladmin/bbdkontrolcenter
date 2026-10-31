@@ -47,6 +47,8 @@ import { navIcon } from './nav-icons.js';
 import { documentButtons } from './documents.js';
 import { studentDeletionDoc } from './documents-logic.js';
 import { installContractWizard } from './contracts/wizard-entry.js';
+import { createFinanceLock } from './finance/finance-lock.js';
+import { setFinanceUnlock } from './common.js';
 
 export { AREAS, SECTIONS };
 
@@ -101,6 +103,9 @@ export function mount(root, ctx) {
     api: createClient(ctx, {
       onUnavailable: (_error, stale) => band?.show(stale),
       onAvailable: () => band?.recovered(),
+      // Kurum finansı kilidi (iş 83): vekilin bildirdiği süre / kilit durumu tek nesnede.
+      onFinanceUntil: (until) => app.financeLock?.noteUntil(until),
+      onFinanceLocked: () => app.financeLock?.noteLocked(),
     }),
     status: null,
     /** KM izni (`finance` → `bbd_akademi.finance`). */
@@ -164,6 +169,10 @@ export function mount(root, ctx) {
     lookups: null,
   };
   app.lookups = lookups(app);
+  // Kurum finansı kilidi (iş 83): SMS onay kodlu giriş; kilit hatası her ekranda aynı pencereyi açar.
+  app.financeLock = createFinanceLock(app);
+  setFinanceUnlock(() => app.financeLock.ensure());
+  disposers.push(() => { app.financeLock.dispose(); setFinanceUnlock(null); });
   // "Kayıt ve ödeme planı" sihirbazı (F-SZ1): KM "Yeni öğrenci" sonrası ve sözleşme ekranlarının açma isteği.
   disposers.push(installContractWizard(app));
 
@@ -369,6 +378,7 @@ export function mount(root, ctx) {
     permissions = new Set(status?.permissions || []);
     features = status?.features && typeof status.features === 'object' ? status.features : null;
     app.api.setFeatures(features);
+    if (status?.financeAccess) app.financeLock.set(status.financeAccess);
   }
 
   async function refreshFeatures() {

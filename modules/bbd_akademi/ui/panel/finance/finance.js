@@ -61,32 +61,33 @@ export function section(app) {
   const node = h('div', 'ak-stack ak-fin');
   const disposers = [];
   let started = false;
+  let lastPayload = null;
+  const lock = app.financeLock || null;
 
   // ---------------------------------------------------------- başlık + özet
-  const range = dateRange({ start: todayIst(-29), end: todayIst(), label: 'Dönem',
+  // Dönem varsayılanı BU AY (iş 83 genel bakış): "Tahsilatlar" kartı bu dönemi ve tüm zamanları gösterir.
+  const range = dateRange({ start: `${todayIst().slice(0, 8)}01`, end: todayIst(), label: 'Dönem',
     onChange: () => loadSummary() });
   disposers.push(() => range.destroy?.());
-  const kpiSlot = h('div', 'ak-money-finance ak-fin-kpi');
+  const kpiSlot = h('div', 'ak-fin-kpi');
+  const lockBadge = lock ? lock.badge() : null;
+  if (lockBadge) disposers.push(lockBadge.dispose);
   node.append(sectionHead('Kurum finansı', {
     subtitle: 'Kurum cari hesapları: taksit, kalem ve tahsilat. Kantin hesabı bu ekranda yer almaz.',
-    actions: [range.node, exportButton(app, range)],
-  }), kpiSlot);
+    actions: [range.node, exportButton(app, range), lockBadge?.node].filter(Boolean),
+  }));
+
+  // KİLİT (iş 83): kod girilene dek bu ekranın yerinde kilit kartı durur; içerik hiç yüklenmez.
+  const content = h('div', 'ak-stack');
+  const gate = h('div');
+  node.append(gate, content);
+  let lockView = null;
 
   async function loadSummary() {
     const { start, end } = range.get();
     try {
       const summary = await app.api.get('/v1/admin/finance/summary', { from: start, to: end });
-      const byMethod = (summary.byMethod || []).filter((row) => row.count)
-        .map((row) => `${METHODS[row.method] || row.method}: ${money(row.amountMinor)} (${num(row.count)})`)
-        .join(' · ');
-      kpiSlot.replaceChildren(kpiRow([
-        { label: 'Açık bakiye', value: money(summary.openMinor) },
-        { label: 'Gecikmiş', value: money(summary.overdueMinor), tone: summary.overdueMinor ? 'bad' : '' },
-        { label: 'Alacak (öğrenci lehine)', value: money(summary.creditMinor || 0) },
-        { label: 'Dönemde tahsil edilen', value: money(summary.collectedMinor),
-          title: byMethod || 'Bu dönemde tahsilat yok.' },
-      ]));
-      if (byMethod) kpiSlot.append(h('div', 'ak-muted ak-fin-methods', byMethod));
+      kpiSlot.replaceChildren(overviewCards(summary, { start, end }));
     } catch (failure) {
       kpiSlot.replaceChildren(errorBox(failure, loadSummary));
     }
@@ -102,7 +103,7 @@ export function section(app) {
     { key: 'templates', label: 'Plan şablonları' },
   ], 'accounts', (key) => showTab(key));
   const tabSlot = h('div');
-  node.append(tabs.node, tabSlot);
+  content.append(kpiSlot, tabs.node, tabSlot);
 
   const builders = {
     accounts: () => accountsTab(app, { openAccount }),
@@ -131,22 +132,110 @@ export function section(app) {
     });
   }
 
-  return {
-    node,
-    shown(payload) {
+  const unlocked = () => !lock || lock.active();
+
+  /** Kilit ↔ içerik. İçerik ilk kez kilit açıkken kurulur; kilit kapanınca gizlenir (veri ekranda kalmaz). */
+  function paintGate() {
+    if (unlocked()) {
+      lockView?.dispose();
+      lockView = null;
+      gate.replaceChildren();
+      content.hidden = false;
+      range.node.hidden = false;
       if (!started) {
         started = true;
         loadSummary();
         showTab('accounts');
+      } else {
+        loadSummary();
+        for (const body of Object.values(bodies)) if (!body.node.hidden) body.reload();
       }
-      if (payload?.tab && builders[payload.tab]) tabs.select(payload.tab);
-      if (payload?.studentId) openAccount(payload.studentId);
+      applyPayload(lastPayload);
+      lastPayload = null;
+      return;
+    }
+    content.hidden = true;
+    range.node.hidden = true;
+    if (!lockView) {
+      lockView = lock.lockScreen({ onDone: () => paintGate() });
+      gate.replaceChildren(lockView.node);
+    }
+  }
+
+  function applyPayload(payload) {
+    if (payload?.tab && builders[payload.tab]) tabs.select(payload.tab);
+    if (payload?.studentId) openAccount(payload.studentId);
+  }
+
+  let wasActive = unlocked();
+  if (lock) {
+    disposers.push(lock.onChange(() => {
+      const now = unlocked();
+      if (now !== wasActive) {
+        wasActive = now;
+        if (node.isConnected) paintGate();
+        else if (!now) content.hidden = true;
+      }
+    }));
+  }
+
+  return {
+    node,
+    shown(payload) {
+      if (unlocked()) {
+        paintGate();
+        if (started) applyPayload(payload);
+      } else {
+        lastPayload = payload || null;
+        paintGate();
+      }
     },
     destroy() {
+      lockView?.dispose();
       for (const fn of disposers) fn();
       for (const body of Object.values(bodies)) body.destroy?.();
     },
   };
+}
+
+// ------------------------------------------------------- genel bakış (iş 83)
+
+/**
+ * Üç büyük kart (KM/web/mobil aynı metinler): Toplam sözleşme bedeli · Cari hesap (alacak) · Tahsilatlar.
+ * Sunucu yeni alanları henüz vermiyorsa (eski Akademi) eski alanlara düşülür ya da "—".
+ */
+export function overviewCards(summary = {}, { start, end } = {}) {
+  const node = h('div', 'ak-fin-overview ak-money-finance');
+  const has = (value) => value !== undefined && value !== null;
+  const cardOf = (label, value, ...subs) => {
+    const card = h('div', 'ak-fin-ov-card');
+    card.append(h('div', 'ak-fin-ov-label', label), h('div', 'ak-fin-ov-value', value));
+    for (const sub of subs.filter(Boolean)) card.append(sub);
+    return card;
+  };
+  const sub = (text, tone = '') => h('div', `ak-fin-ov-sub ${tone}`.trim(), text);
+
+  const contract = cardOf('Toplam sözleşme bedeli',
+    has(summary.contractTotalMinor) ? money(summary.contractTotalMinor) : '—',
+    sub(has(summary.contractCount) ? `${num(summary.contractCount)} sözleşme (iptal edilenler hariç)`
+      : 'İptal edilmemiş sözleşmelerin toplamı'));
+
+  const receivable = has(summary.receivableMinor) ? summary.receivableMinor : summary.openMinor;
+  const current = cardOf('Cari hesap (alacak)', has(receivable) ? money(receivable) : '—',
+    sub(`Gecikmiş: ${money(summary.overdueMinor || 0)}`, summary.overdueMinor ? 'bad' : ''),
+    summary.creditMinor ? sub(`Fazla ödeme (öğrenci lehine): ${money(summary.creditMinor)}`) : null);
+
+  const byMethod = (summary.byMethod || []).filter((row) => row.count)
+    .map((row) => `${METHODS[row.method] || row.method}: ${money(row.amountMinor)} (${num(row.count)})`)
+    .join(' · ');
+  const period = start && end ? `${fmtDate(start)} – ${fmtDate(end)}` : 'Seçili dönem';
+  const collected = cardOf('Tahsilatlar', money(summary.collectedMinor || 0),
+    sub(period),
+    has(summary.collectedTotalMinor) ? sub(`Toplam: ${money(summary.collectedTotalMinor)}`) : null,
+    h('div', 'ak-fin-ov-methods', byMethod || 'Bu dönemde tahsilat yok.'));
+
+  node.append(contract, current, collected);
+  return node;
 }
 
 // --------------------------------------------------------------- hesaplar
