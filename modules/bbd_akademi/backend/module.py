@@ -24,6 +24,7 @@ from .core.operations import Allowlist
 from .core.proxy import AkademiProxy
 from .core.stepup import StepUpStore
 from .documents.service import DocumentService, Letterheads
+from .finance.access import FinanceAccess
 from .finance.service import StudentFinance
 from .permission_map import unmapped
 from .staff.service import StaffService
@@ -41,9 +42,12 @@ def register(ctx: ModuleContext) -> None:
     config = GatewayConfig.from_mapping(ctx.config)
     gateway = AkademiGateway(config=config, secrets=ctx.capability("secrets"), log=ctx.log)
     allowlist = Allowlist(OPERATIONS)
+    # Kurum finansı kilidi (iş 83): KM oturumu başına SMS onay kodlu 30 dk kayan izin — vekilin kurum-finansı
+    # işlemlerinde zorunlu. Arka plan işleri (personel eşitlemesi, kulüp izleyicisi, yetenekler) vekilden geçmez.
+    finance_access = FinanceAccess(gateway=gateway, log=ctx.log)
     proxy = AkademiProxy(gateway=gateway, allowlist=allowlist,
                          step_up=StepUpStore(ctx.store, ttl_seconds=config.step_up_seconds),
-                         log=ctx.log)
+                         log=ctx.log, finance=finance_access)
     staff = StaffService(store=ctx.store, gateway=gateway, log=ctx.log)
     # Belgeler (önizle/yazdır): PDF rapor köküne yazılır; masaüstü yoksa
     # kurulum kökündeki data/exports (çekirdeğin `output_roots` ile aynı yer).
@@ -71,7 +75,7 @@ def register(ctx: ModuleContext) -> None:
     ctx.add_router(bind(proxy, staff,
                         events=lambda: ctx.try_capability("mobile_gateway.events"),
                         features=TenantFeatures(gateway=gateway, log=ctx.log),
-                        documents=documents, club=watcher))
+                        documents=documents, club=watcher, finance=finance_access))
     ctx.provide("akademi.student_finance", StudentFinance(gateway=gateway, log=ctx.log))
     _LIVE.update(staff=staff, gateway=gateway, club_watcher=watcher)
     staff.start(config.staff_sync_minutes)

@@ -72,6 +72,7 @@ from starlette.background import BackgroundTask
 
 from km_sdk import CurrentUser
 
+from ..finance import access as finance_lock
 from ..permission_map import km_permissions, requires_step_up
 from .gateway import (
     FORWARD_REQUEST_HEADERS,
@@ -199,10 +200,14 @@ class AkademiProxy:
     def __init__(self, *, gateway: AkademiGateway, allowlist: Allowlist,
                  step_up: StepUpStore, log: Any,
                  sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 finance: finance_lock.FinanceAccess | None = None) -> None:
         self.gateway = gateway
         self.allowlist = allowlist
         self.step_up = step_up
+        #: Kurum finansı kilidi (iş 83). `None` yalnız eski test kurulumlarında: kilit uygulanmaz. Üretimde
+        #: `module.register` her zaman verir.
+        self.finance = finance
         self._log = log
         self._sleep = sleep
         self._clock = clock
@@ -288,6 +293,24 @@ class AkademiProxy:
                          "Bu işlem için PIN'inizi yeniden girmeniz gerekiyor.",
                          {"operationId": resolved.operation.operation_id})
 
+    def require_finance(self, resolved: Resolved, user: CurrentUser, session: str) -> float | None:
+        """Kurum finansı kilidi (iş 83): kilitli işlemde oturumun açık izni yoksa `403 finance_access_required`.
+
+        İzin açıksa süre yeniden 30 dk'ya uzar (kayan; hareketsizlikte kapanır) ve yeni bitiş döner. Kilitsiz
+        işlemde (kantin, kitap, sözleşme …) `None`."""
+        if self.finance is None or not finance_lock.locked(resolved.operation):
+            return None
+        until = self.finance.touch(user, session)
+        if until is None:
+            raise ProxyError(403, "finance_access_required", finance_lock.LOCKED_MESSAGE,
+                             {"operationId": resolved.operation.operation_id})
+        return until
+
+    def finance_masked(self, resolved: Resolved, user: CurrentUser, session: str) -> bool:
+        """Yönetici özeti: kilit kapalıyken finans KPI'ları `null` döner."""
+        return (self.finance is not None and finance_lock.masks(resolved.operation)
+                and self.finance.until(user, session) is None)
+
     def headers_for(self, user: CurrentUser, trace: str, *, step_up: bool,
                     incoming: Mapping[str, str] | None = None,
                     idempotency_key: str | None = None,
@@ -315,10 +338,13 @@ class AkademiProxy:
 
     # ------------------------------------------------------------ ham vekil
 
-    async def forward(self, request: Request, user: CurrentUser, path: str) -> Response:
+    async def forward(self, request: Request, user: CurrentUser, path: str,
+                      session: str = "") -> Response:
         trace = request_id(request.headers.get("x-request-id"))
         try:
             resolved = self.authorize(user, request.method, path)
+            finance_until = self.require_finance(resolved, user, session)
+            masked = self.finance_masked(resolved, user, session)
             step_up = await self.require_step_up(resolved, user,
                                                  request.headers.get(STEP_UP_HEADER))
             limit = self.gateway.config.max_upload_bytes
@@ -327,6 +353,8 @@ class AkademiProxy:
                 raise ProxyError(413, "payload_too_large",
                                  f"Dosya en çok {self.gateway.config.max_upload_mb} MB olabilir.")
             headers = self.headers_for(user, trace, step_up=step_up, incoming=request.headers)
+            if masked:
+                headers.pop("if-none-match", None)
             content: AsyncIterator[bytes] | None = None
             if request.method not in ("GET", "DELETE") or declared not in (None, "0"):
                 content = _limited(request.stream(), limit)
@@ -336,7 +364,20 @@ class AkademiProxy:
         except (ProxyError, AkademiError) as failure:
             return error_response(failure, trace)
         self._log_call(user, resolved, upstream.status_code, trace)
-        return _stream_back(upstream, trace)
+        if masked and upstream.status_code == 200:
+            # Kilitliyken özet: gövde ara belleğe alınır, finans alanı `null` yazılır (küçük JSON).
+            try:
+                result = await _buffer(upstream, self.gateway.config.max_upload_bytes * 2)
+            except ProxyError as failure:
+                return error_response(failure, trace)
+            finally:
+                await upstream.aclose()
+            return JSONResponse(status_code=200, content=finance_lock.mask(result.get("data")),
+                                headers={"x-request-id": trace})
+        response = _stream_back(upstream, trace)
+        if finance_until is not None:
+            response.headers["x-finance-access-until"] = finance_lock.iso(finance_until)
+        return response
 
     async def download(self, url: str, trace: str) -> Response:
         try:
@@ -351,18 +392,23 @@ class AkademiProxy:
                    query: Mapping[str, Any] | None = None, body: Any = None,
                    idempotency_key: str | None = None, step_up_token: str | None = None,
                    if_none_match: str | None = None, upload: Upload | None = None,
-                   trace: str | None = None) -> dict[str, Any]:
+                   trace: str | None = None, session: str = "") -> dict[str, Any]:
         trace = request_id(trace)
+        finance_until: float | None = None
+        masked = False
         try:
             if idempotency_key and not IDEMPOTENCY.match(idempotency_key):
                 raise ProxyError(400, "idempotency_key_invalid",
                                  "İşlem anahtarı geçersiz (8–128 karakter, harf/rakam/._:-).")
             path_only, _, inline_query = path.partition("?")
             resolved = self.authorize(user, method, path_only)
+            finance_until = self.require_finance(resolved, user, session)
+            masked = self.finance_masked(resolved, user, session)
             step_up = await self.require_step_up(resolved, user, step_up_token)
             headers = self.headers_for(user, trace, step_up=step_up,
                                        idempotency_key=idempotency_key,
-                                       if_none_match=if_none_match)
+                                       # Maskeli özet ETag'le 304 alırsa istemci eski (finanslı) kopyasını kullanırdı.
+                                       if_none_match=None if masked else if_none_match)
             query_text = _encode_query(query, inline_query)
             if upload is not None:
                 if len(upload.data) > self.gateway.config.max_upload_bytes:
@@ -389,6 +435,8 @@ class AkademiProxy:
                 else:
                     stale_key = (str(user.id), resolved.operation.operation_id,
                                  resolved.upstream_path, query_text)
+                    if masked:
+                        stale_key = (*stale_key, "finance-masked")
                     # Devre açıksa ve son bilinen veri varsa beklemeden onu ver.
                     if self.gateway.circuit()["open"] and (hit := self.stale.get(stale_key)):
                         return _stale_envelope(hit, trace, "circuit_open")
@@ -430,6 +478,12 @@ class AkademiProxy:
             await upstream.aclose()
         self._log_call(user, resolved, upstream.status_code, trace)
         result["headers"].setdefault("requestId", trace)
+        if finance_until is not None:
+            result["headers"]["financeAccessUntil"] = finance_lock.iso(finance_until)
+        if masked and result.get("data") is not None:
+            result["data"] = finance_lock.mask(result["data"])
+            result["headers"].pop("etag", None)
+            result["headers"]["financeMasked"] = True
         if (method.upper() == "GET" and upload is None and upstream.status_code == 200
                 and result.get("file") is None and result.get("data") is not None):
             self.stale.put((str(user.id), resolved.operation.operation_id, resolved.upstream_path,

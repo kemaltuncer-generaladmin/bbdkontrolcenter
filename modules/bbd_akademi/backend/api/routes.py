@@ -38,7 +38,15 @@ from ..core.features import TenantFeatures
 from ..core.gateway import request_id
 from ..core.proxy import AkademiProxy, ProxyError, decode_upload, error_response
 from ..documents.service import DocumentDenied, DocumentService
-from ..permission_map import ALL_PERMISSIONS, STAFF, VIEW, km_permissions, requires_step_up
+from ..finance.access import FinanceAccess, FinanceAccessError
+from ..permission_map import (
+    ALL_PERMISSIONS,
+    FINANCE,
+    STAFF,
+    VIEW,
+    km_permissions,
+    requires_step_up,
+)
 from ..staff.service import ROLE_LABELS, StaffError, StaffService
 
 router = APIRouter()
@@ -48,6 +56,7 @@ _events: Callable[[], Any] | None = None
 _features: TenantFeatures | None = None
 _documents: DocumentService | None = None
 _club: Any | None = None
+_finance: FinanceAccess | None = None
 #: Deneme Kulübü ekranı (iş 81-km-kulup): izleyici durumu ve "Şimdi tara" kulüp iznindedir.
 CLUB = "bbd_akademi.club"
 
@@ -63,13 +72,18 @@ METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 def bind(proxy: AkademiProxy, staff: StaffService,
          events: Callable[[], Any] | None = None,
          features: TenantFeatures | None = None,
-         documents: DocumentService | None = None, club: Any | None = None) -> APIRouter:
+         documents: DocumentService | None = None, club: Any | None = None,
+         finance: FinanceAccess | None = None) -> APIRouter:
     """`events`: `mobile_gateway.events` yeteneğini her çağrıda çözen işlev
     (geçit yoksa ya da bu modülden sonra yüklenirse `None` döner).
     `features`: kurum özellik bayrakları özeti (verilmezse vekilin geçidiyle kurulur).
     `documents`: belge üretimi (önizle/yazdır); verilmezse belge uçları 503 döner."""
-    global _proxy, _staff, _events, _features, _documents, _club
+    global _proxy, _staff, _events, _features, _documents, _club, _finance
     _proxy, _staff, _events, _documents, _club = proxy, staff, events, documents, club
+    # Kurum finansı kilidi (iş 83): vekil ve kilit uçları AYNI nesneyi kullanır.
+    _finance = finance or proxy.finance
+    if proxy.finance is None:
+        proxy.finance = _finance
     _features = features or TenantFeatures(gateway=proxy.gateway, log=proxy.log)
     return router
 
@@ -87,6 +101,16 @@ def _events_access(user: CurrentUser) -> dict[str, bool]:
     return {"supported": gateway_events() is not None,
             "canView": user.has_permission(EVENTS_VIEW),
             "canManage": user.has_permission(EVENTS_MANAGE)}
+
+
+def session_key(request: Request) -> str:
+    """KM oturumunun kimliği: `Authorization` belirtecinin özeti (belirtecin kendisi saklanmaz).
+
+    Finans izni (iş 83) kişi + oturum başınadır: aynı kişinin başka cihazdaki oturumu ayrı kod ister."""
+    import hashlib
+
+    raw = request.headers.get("authorization") or ""
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40] if raw else ""
 
 
 def _error(status: int, code: str, message: str) -> JSONResponse:
@@ -204,7 +228,7 @@ class StaffPatchBody(BaseModel):
 
 
 @router.get("/km/status")
-async def status(user: CurrentUser = requires(VIEW),
+async def status(request: Request, user: CurrentUser = requires(VIEW),
                  fresh: bool = Query(default=False),
                  with_operations: bool = Query(default=False, alias="operations"),
                  ) -> dict[str, Any]:
@@ -234,6 +258,9 @@ async def status(user: CurrentUser = requires(VIEW),
         "gatewayEvents": _events_access(user),
         # Kurum özellik bayrakları `{anahtar: açık mı}`; okunamazsa null (her bölüm görünür).
         "features": await _features.snapshot(fresh=fresh) if _features is not None else None,
+        # Kurum finansı kilidi (iş 83): bu oturumun izni; finans izni olmayana null.
+        "financeAccess": (_finance.state(user, session_key(request))
+                          if _finance is not None and user.has_permission(FINANCE) else None),
         **extra,
     }
 
@@ -272,7 +299,7 @@ def _operation_items(user: CurrentUser) -> list[dict[str, Any]]:
 
 
 @router.post("/km/call")
-async def call(body: CallBody, user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
+async def call(body: CallBody, request: Request, user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
     upload = None
     if body.upload is not None:
         try:
@@ -284,7 +311,8 @@ async def call(body: CallBody, user: CurrentUser = requires(VIEW)) -> dict[str, 
     return await proxy().call(
         user, method=body.method, path=body.path, query=body.query, body=body.body,
         idempotency_key=body.idempotencyKey, step_up_token=body.stepUpToken,
-        if_none_match=body.ifNoneMatch, upload=upload, trace=body.requestId)
+        if_none_match=body.ifNoneMatch, upload=upload, trace=body.requestId,
+        session=session_key(request))
 
 
 @router.post("/km/step-up")
@@ -360,6 +388,59 @@ async def document_from_akademi(body: AkademiPdfBody, user: CurrentUser = requir
                                             preview=body.preview)
     except DocumentDenied as failure:
         return _denied(failure)
+
+
+# ------------------------------------------------------- kurum finansı kilidi (iş 83)
+
+
+class FinanceVerifyBody(BaseModel):
+    challengeId: str = Field(min_length=4, max_length=128)
+    code: str = Field(min_length=4, max_length=12)
+
+
+def finance_access() -> FinanceAccess:
+    if _finance is None:
+        raise HTTPException(status_code=503, detail="Finans kilidi hazır değil.")
+    return _finance
+
+
+def _finance_error(failure: FinanceAccessError) -> JSONResponse:
+    return JSONResponse(status_code=failure.status, content={"error": {
+        "code": failure.code, "message": failure.message, "status": failure.status,
+        "details": failure.details, "traceId": None}})
+
+
+@router.get("/km/finance-access")
+async def finance_access_state(request: Request,
+                               user: CurrentUser = requires(FINANCE)) -> dict[str, Any]:
+    """Bu oturumun kurum finansı izni: `{active, until, idleMinutes, approvers, managerMissing}`."""
+    return finance_access().state(user, session_key(request))
+
+
+@router.post("/km/finance-access/request")
+async def finance_access_request(request: Request, user: CurrentUser = requires(FINANCE)) -> Any:
+    """Onay kodu iste: Akademi kodu finans yöneticisinin telefonuna SMS'le gönderir."""
+    try:
+        return await finance_access().request(user, session_key(request))
+    except FinanceAccessError as failure:
+        return _finance_error(failure)
+
+
+@router.post("/km/finance-access/verify")
+async def finance_access_verify(body: FinanceVerifyBody, request: Request,
+                                user: CurrentUser = requires(FINANCE)) -> Any:
+    """Kodu doğrula: bu oturumda kurum finansı 30 dk (hareketsizlikte) açılır."""
+    try:
+        return await finance_access().verify(user, session_key(request), body.challengeId, body.code)
+    except FinanceAccessError as failure:
+        return _finance_error(failure)
+
+
+@router.post("/km/finance-access/end", status_code=204)
+async def finance_access_end(request: Request, user: CurrentUser = requires(FINANCE)) -> Response:
+    """"Finansı kilitle": izin hemen kapanır."""
+    finance_access().end(user, session_key(request))
+    return Response(status_code=204)
 
 
 # ------------------------------------------------------------------ personel
@@ -472,4 +553,4 @@ async def club_store_watch_run(user: CurrentUser = requires(CLUB)) -> dict[str, 
 @router.api_route("/{path:path}", methods=METHODS, include_in_schema=False)
 async def forward(path: str, request: Request,
                   user: CurrentUser = requires(VIEW)) -> Response:
-    return await proxy().forward(request, user, path)
+    return await proxy().forward(request, user, path, session=session_key(request))
